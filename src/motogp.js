@@ -1,7 +1,10 @@
 import puppeteer from 'puppeteer';
 import fetch from 'node-fetch';
+import datefnstz from 'date-fns-tz';
+import dotenv from 'dotenv';
 import { writeToJSON } from './writeToJSON.js';
 
+dotenv.config();
 const GOOGLE_API_KEY = process.env.GOOGLE_API_KEY;
 
 async function scraper() {
@@ -39,7 +42,7 @@ async function scraper() {
     });
 
     for (let event of events) {
-      console.log('Scraping', event.name);
+      console.log('Scraping -->', event.name);
       // navigate to the link of each event
       await page.goto(`${event.link}#schedule`);
       await page.click('p.c-schedule__time.radio[data-type="local"]');
@@ -84,10 +87,17 @@ async function scraper() {
         return data;
       });
       event.sessions = sessions;
+
+      const timezoneOffset = await page.evaluate(
+        () => document.querySelector('span.gmt_offset').innerText
+      );
+      event.timezoneOffset = timezoneOffset.slice(0, 2); // remove extra chars
     }
 
     // cleaning up data
     const updatedEvents = events.map(async (event) => {
+      let slug = generateSlug(event.name);
+
       const [latitude, longitude] = await getLatLong(
         `${event.track}, ${event.location}`
       );
@@ -96,10 +106,8 @@ async function scraper() {
       for (let session of event.sessions) {
         const { race, date, start } = session;
         const key = sessionKeyMap[race];
-        sessions[key] = generateSessionTime(date, start);
+        sessions[key] = generateSessionTime(date, start, event.timezoneOffset);
       }
-
-      let slug = generateSlug(event.name);
 
       event.location = captialise(event.location);
       event.latitude = latitude;
@@ -107,17 +115,20 @@ async function scraper() {
       event.sessions = sessions;
       event.slug = slug;
       event.localeKey = slug;
+
       delete event.link;
+      delete event.timezoneOffset;
 
       return event;
     });
+
     let awaitedEvents = await Promise.all(updatedEvents);
     const result = { races: awaitedEvents };
     writeToJSON(result);
 
     await browser.close();
   } catch (error) {
-    console.log(error);
+    console.error(error);
     process.exit(1);
   }
 }
@@ -137,9 +148,26 @@ const sessionKeyMap = {
   Race: 'race',
 };
 
-function generateSessionTime(date, start) {
+function generateSessionTime(date, start, offset) {
+  // pad the offset to fit correct format
+  let [sign, hour] = offset.split('');
+  let paddedOffset = `${sign ?? ''}${hour.padStart(2, 0)}:00`;
+
+  // clean up the mixed date formats
   const cleanedDate = splitDate(date);
-  return new Date(`${cleanedDate}, ${start}:00`).toISOString();
+
+  // get the local race time as millis
+  const raceTimeInMilliseconds = new Date(
+    `${cleanedDate}, ${start}:00`
+  ).getTime();
+
+  // adjust the time for offset
+  const adjustedForOffset = datefnstz.zonedTimeToUtc(
+    raceTimeInMilliseconds,
+    paddedOffset
+  );
+
+  return adjustedForOffset;
 }
 
 function splitDate(date) {
