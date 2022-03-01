@@ -1,12 +1,14 @@
 {
   "name": "f1-web-scraper",
   "private": true,
-  "version": "0.0.1",
+  "version": "0.1.1",
   "type": "module",
   "scripts": {
-    "start": "node src/scraper"
+    "start": "node src/motogp"
   },
   "dependencies": {
+    "date-fns-tz": "^1.3.0",
+    "dotenv": "^16.0.0",
     "node-fetch": "^3.2.0",
     "puppeteer": "^13.4.0"
   }
